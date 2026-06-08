@@ -1,7 +1,7 @@
 """Trendyol Scraper — web arayuzu (Streamlit).
 
 Calistirmak icin:
-    streamlit run app.py
+    python -m streamlit run app.py
 Tarayici otomatik acar: http://localhost:8501
 """
 
@@ -26,61 +26,99 @@ from pipeline import run_merchant
 st.set_page_config(page_title="Trendyol Scraper", page_icon="🛍️", layout="centered")
 st.title("🛍️ Trendyol Mağaza Scraper")
 st.caption("Tedarikçi mağazasındaki ürünleri toplar ve Excel'e aktarır.")
+
+# --------------------------------------------------------------------------
+# YÖNETİCİ NOTU — cookie dolunca buraya bakılsın
+# --------------------------------------------------------------------------
+with st.expander("⚙️ Yönetici: Cookie / API Ayarları (burayı oku)"):
+    st.markdown("""
+### Cookie nedir, neden lazım?
+Program Trendyol'a istek atarken "sen kimsin?" sorusuna senin tarayıcı oturumunla cevap verir.
+Bu oturum bilgisine **cookie** denir. **Birkaç haftada bir** süresi dolar ve güncellenmesi gerekir.
+
+---
+
+### Cookie süresi dolunca ne olur?
+Program çalıştırılınca log'da şu mesaj çıkar:
+```
+!!! BLOK: Blok tespit edildi: 403/challenge
+```
+Bu görününce aşağıdaki adımları izle.
+
+---
+
+### Cookie nasıl güncellenir?
+
+1. **Trendyol.com**'u tarayıcıda aç ve hesabına giriş yap
+2. Klavyede **F12**'ye bas (geliştirici araçları açılır)
+3. Üstten **Network** sekmesine tıkla
+4. Hemen yanındaki filtreden **Fetch/XHR**'ı seç
+5. Trendyol'da herhangi bir sayfaya git veya sayfayı yenile (F5)
+6. Solda çıkan listeden `apigw.trendyol.com` ile başlayan herhangi bir satıra tıkla
+7. Sağda **Request Headers** sekmesine tıkla
+8. **Cookie:** yazan satırı bul — satırın tüm değerini kopyala (çok uzun olabilir, hepsi lazım)
+9. Proje klasöründeki `.env` dosyasını Not Defteri ile aç
+10. `TRENDYOL_COOKIE=` kısmından sonrasını silip yeni cookie'yi yapıştır
+11. Kaydet — bir sonraki çalıştırmada yeni cookie kullanılır
+
+---
+
+### Detay URL nedir?
+Açıklama, tam kategori yolu, ölçüler ve barkod için detay endpoint'i gerekiyor.
+Şu an bu alan ayarlanmamış, program çalışıyor ama o sütunlar boş geliyor.
+
+**Detay URL'i nasıl bulunur:**
+1. Trendyol'da bir ürün sayfası aç
+2. F12 → Network → Fetch/XHR
+3. `apigw.trendyol.com` ile başlayan ve `productgw` içeren isteği bul
+   (`marketing`, `seo`, `review`, `linking` içerenleri atla)
+4. O isteğin **Request URL**'ini kopyala
+5. URL içindeki ürün ID numarasını `{product_id}` ile değiştir
+6. `.env` dosyasında `TRENDYOL_DETAIL_URL=` satırına yapıştır
+
+---
+
+### Mağaza ID nereden bulunur?
+Trendyol'da tedarikçi mağazasına git, URL'ye bak:
+```
+trendyol.com/magaza/modatte?merchantId=106280
+                                        ^^^^^^
+                                    bu sayı = Mağaza ID
+```
+    """)
+
+    st.info(
+        "`.env` dosyası proje klasöründe bulunur. "
+        "Not Defteri ile açılır, kaydet ve programı tekrar çalıştır — başka bir şey gerekmez."
+    )
+
 st.divider()
 
 # --------------------------------------------------------------------------
-# Giris alanlari
+# Kullanici girisi: sadece magaza ID
 # --------------------------------------------------------------------------
+st.markdown("### Mağaza ID gir ve çalıştır")
+
 merchant_id = st.text_input(
     "Mağaza ID",
     placeholder="örn. 106280",
-    help=(
-        "Trendyol'da tedarikçi mağaza sayfasının URL'sindeki merchantId= değeri.\n\n"
-        "Örnek URL: trendyol.com/magaza/modatte?merchantId=**106280**\n"
-        "→ buraya yazacağın değer: 106280"
-    ),
+    label_visibility="collapsed",
 )
 
-cookie = st.text_area(
-    "Cookie",
-    height=130,
-    placeholder="storefrontId=1; language=tr; countryCode=TR; ...",
-    help=(
-        "**Nasıl alınır:**\n\n"
-        "1. Trendyol.com'u tarayıcıda aç (giriş yapmış olman lazım)\n"
-        "2. **F12** → **Network** sekmesi → üstten **Fetch/XHR** filtrele\n"
-        "3. Herhangi bir sayfaya git veya yenile — listede `apigw.trendyol.com` ile başlayan bir istek görünecek\n"
-        "4. O isteğe tıkla → sağda **Request Headers** sekmesi → **Cookie:** satırını komple kopyala\n\n"
-        "Cookie birkaç haftada bir yenilenmesi gerekebilir."
-    ),
+st.caption(
+    "Mağaza ID'yi bulmak için: Trendyol'da tedarikçi mağazasına git → "
+    "URL'de `merchantId=` kısmındaki sayıyı kopyala."
 )
 
-detail_url = st.text_input(
-    "Detay URL  *(opsiyonel — açıklama, ölçü, barkod için)*",
-    value=config.DETAIL_URL,
-    help=(
-        "Açıklama, tam kategori yolu, ölçüler ve barkod bu endpoint'ten geliyor.\n\n"
-        "**Nasıl alınır:**\n\n"
-        "1. Trendyol'da bir ürün sayfası aç\n"
-        "2. F12 → Network → Fetch/XHR\n"
-        "3. `apigw.trendyol.com` ile başlayan ve `productgw` içeren isteği bul "
-        "(`marketing`, `seo`, `review`, `linking` içerenleri atla)\n"
-        "4. O isteğin **Request URL**'ini kopyala\n"
-        "5. URL'deki ürün ID numarasını `{product_id}` ile değiştir\n\n"
-        "⚠️ `{product_id}` kısmını koru — program oraya ID'yi otomatik yazar.\n\n"
-        "Boş bırakırsan: kategori yaprağı, marka ve kart özellikleri listeden alınır "
-        "(açıklama ve tam breadcrumb olmaz)."
-    ),
-)
+# Cookie yuklendi mi kontrol et
+cookie_ok = bool(config.RAW_COOKIE and len(config.RAW_COOKIE) > 50)
+if not cookie_ok:
+    st.error(
+        "Cookie ayarlanmamış! Yukarıdaki **Yönetici: Cookie / API Ayarları** bölümünü aç ve "
+        "talimatları izleyerek `.env` dosyasına cookie ekle."
+    )
 
-st.divider()
-
-# --------------------------------------------------------------------------
-# Calistir butonu
-# --------------------------------------------------------------------------
-can_run = bool(merchant_id.strip() and cookie.strip())
-if not can_run:
-    st.info("Çalıştırmak için Mağaza ID ve Cookie gir.")
+can_run = bool(merchant_id.strip()) and cookie_ok
 
 run_btn = st.button(
     "▶  Çalıştır",
@@ -95,12 +133,13 @@ run_btn = st.button(
 if run_btn:
     mid = merchant_id.strip()
 
-    # Config'i kullanici girdisiyle eziyoruz (runtime override)
-    config.RAW_COOKIE = cookie.strip()
-    if detail_url.strip():
-        config.DETAIL_URL = detail_url.strip()
+    st.divider()
+    st.subheader("⏳ Çalışıyor...")
+    st.caption(
+        "İstekler arasında 3-6 saniye bekleniyor (ban riski azaltmak için). "
+        "112 ürünlük bir mağaza ~10 dakika sürebilir."
+    )
 
-    st.subheader("Çalışıyor...")
     log_box = st.empty()
     logs: list[str] = []
 
@@ -127,7 +166,6 @@ if run_btn:
             row = cur.fetchone()
             store_name = row[0] if row else mid
 
-            # Dosya adi: MağazaAdı_ID_sonuclar.xlsx
             safe = "".join(
                 c if c.isalnum() or c in "- " else "_"
                 for c in (store_name or mid)
@@ -153,10 +191,15 @@ if run_btn:
 
         except Exception as exc:
             st.error(f"Export hatası: {exc}")
+
     else:
-        st.error(
-            f"Scraper durdu: {run_error}\n\n"
-            "Cookie süresi dolmuş olabilir — yeni cookie yapıştırıp tekrar dene."
-        )
+        if "403" in str(run_error) or "challenge" in str(run_error).lower():
+            st.error(
+                "🚫 **Cookie süresi dolmuş veya IP engellendi.**\n\n"
+                "Yukarıdaki **Yönetici: Cookie / API Ayarları** bölümünü aç, "
+                "cookie güncelleme adımlarını izle."
+            )
+        else:
+            st.error(f"Hata: {run_error}")
 
     conn.close()
