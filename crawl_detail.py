@@ -1,8 +1,8 @@
 """Phase 4: Urun detay zenginlestirme.
 
-[VERIFY] DETAIL_URL Phase 0'da dogrulanmali.
-Her urun icin: kategori breadcrumb, aciklama, olculer, marka, barkod ceker.
-En cok istek atilan / en riskli asama -> en yavas burada gidilir.
+[DOGRULANMIS] Endpoint: discovery-storefront-trproductgw-service/api/component-read/component/{id}
+Gerekli header: x-agentname: StorefrontProductGateway
+Yanit yapisi: { isSuccess, result: { descriptions[], attributes[]?, category? } }
 """
 
 from __future__ import annotations
@@ -14,27 +14,61 @@ from api_client import ApiClient
 from extract import (
     deep_find,
     extract_attributes,
+    extract_brand,
     extract_breadcrumb,
     extract_dimensions,
 )
 from models import ProductDetail
 
+_DETAIL_HEADERS = {"x-agentname": config.DETAIL_AGENT}
+
+
+def _extract_description(data: dict) -> str | None:
+    """result.descriptions[] dizisinden aciklama metni ayiklar."""
+    result = data.get("result") if isinstance(data, dict) else None
+    if isinstance(result, dict):
+        descs = result.get("descriptions") or []
+        if isinstance(descs, list):
+            parts = []
+            for d in descs:
+                if not isinstance(d, dict):
+                    continue
+                # Her desc objesinde "description" veya "value" anahtari
+                text = d.get("description") or d.get("value") or d.get("text")
+                if text and isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+            if parts:
+                return "\n".join(parts)
+    # Fallback: derin arama
+    return deep_find(data, ["description", "contentDescriptionText", "productDescription"])
+
 
 def fetch_detail(client: ApiClient, product_id: str, product_url: str | None = None) -> ProductDetail:
     url = config.DETAIL_URL.format(product_id=product_id)
-    data = client.get_json(url, referer=product_url or "https://www.trendyol.com/")
+    data = client.get_json(
+        url,
+        referer=product_url or "https://www.trendyol.com/",
+        extra_headers=_DETAIL_HEADERS,
+    )
 
-    attributes = extract_attributes(data)
-    description = deep_find(data, ["description", "contentDescriptionText", "productDescription"])
-    brand = deep_find(data, ["brand", "brandName"])
-    if isinstance(brand, dict):
-        brand = deep_find(brand, ["name", "text"])
-    barcode = deep_find(data, ["barcode", "barkod", "gtin"])
+    # Yanit basarisizsa veya result yoksa bosla devam et (ban degil, veri yok)
+    if isinstance(data, dict) and not data.get("isSuccess", True):
+        pass  # devam et, result icinde bos listeler olabilir
+
+    # result alt objesi varsa oradan cek, yoksa root'tan
+    result = data.get("result", data) if isinstance(data, dict) else data
+
+    attributes = extract_attributes(result) or extract_attributes(data)
+    brand = extract_brand(result) or extract_brand(data)
+    barcode = (
+        deep_find(result, ["barcode", "barkod", "gtin"])
+        or deep_find(data, ["barcode", "barkod", "gtin"])
+    )
 
     return ProductDetail(
         product_id=str(product_id),
-        category_path=extract_breadcrumb(data),
-        description=str(description) if description else None,
+        category_path=extract_breadcrumb(result) or extract_breadcrumb(data),
+        description=_extract_description(data),
         attributes_json=json.dumps(attributes, ensure_ascii=False) if attributes else None,
         dimensions=extract_dimensions(attributes),
         brand=str(brand) if brand else None,

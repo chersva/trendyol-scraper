@@ -123,10 +123,17 @@ class ApiClient:
         stat[status] = stat.get(status, 0) + 1
 
     # -- ana metot ----------------------------------------------------------
-    def get_json(self, url: str, params: dict | None = None, referer: str | None = None) -> dict:
+    def get_json(
+        self,
+        url: str,
+        params: dict | None = None,
+        referer: str | None = None,
+        extra_headers: dict | None = None,
+    ) -> dict:
         """Tek GET istegi -> parse edilmis JSON. Blok halinde BlockedError firlatir."""
         last_exc: Exception | None = None
         attempts = config.MAX_RETRY + 1
+        headers = {**self._headers(referer), **(extra_headers or {})}
 
         for attempt in range(attempts):
             self._pace()
@@ -135,7 +142,7 @@ class ApiClient:
                 resp = self.session.get(
                     url,
                     params=params,
-                    headers=self._headers(referer),
+                    headers=headers,
                     cookies=self.cookies,
                     timeout=config.TIMEOUT,
                     proxies=self.proxies,

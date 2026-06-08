@@ -71,10 +71,12 @@ PRODUCTS_URL = (
 
 # Urun detay endpoint'i — .env dosyasindaki TRENDYOL_DETAIL_URL'den okunur.
 # {product_id} kismini degistirme, program oraya ID'yi otomatik girer.
+# [DOGRULANMIS] x-agentname: StorefrontProductGateway header'i gerekli
 DETAIL_URL = os.getenv(
     "TRENDYOL_DETAIL_URL",
-    "https://apigw.trendyol.com/discovery-web-productgw-service/api/productDetail/{product_id}",
+    "https://apigw.trendyol.com/discovery-storefront-trproductgw-service/api/component-read/component/{product_id}?channelId=1",
 )
+DETAIL_AGENT = "StorefrontProductGateway"  # x-agentname header degeri
 
 CHANNEL_ID = 1
 PAGE_SIZE = 24       # listeleme sayfa basi urun (DevTools'tan dogrula)
