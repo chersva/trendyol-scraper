@@ -69,11 +69,11 @@ PRODUCTS_URL = (
     "https://apigw.trendyol.com/discovery-sfint-search-service/api/search/products"
 )
 
-# [VERIFY] Urun detay endpoint'i henuz dogrulanmadi.
-# Bir urun sayfasi acip Network > XHR'da contentId iceren istegi bul.
-DETAIL_URL = (
-    "https://apigw.trendyol.com/discovery-web-productgw-service"
-    "/api/productDetail/{product_id}"
+# Urun detay endpoint'i — .env dosyasindaki TRENDYOL_DETAIL_URL'den okunur.
+# {product_id} kismini degistirme, program oraya ID'yi otomatik girer.
+DETAIL_URL = os.getenv(
+    "TRENDYOL_DETAIL_URL",
+    "https://apigw.trendyol.com/discovery-web-productgw-service/api/productDetail/{product_id}",
 )
 
 CHANNEL_ID = 1
