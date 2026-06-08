@@ -155,28 +155,95 @@ trendyol.com/magaza/modatte?merchantId=106280
 st.divider()
 
 # --------------------------------------------------------------------------
-# Kullanici girisi: sadece magaza ID
+# Kullanici girisi
 # --------------------------------------------------------------------------
-st.markdown("### Mağaza ID gir ve çalıştır")
-
+st.markdown("### Mağaza ID")
 merchant_id = st.text_input(
     "Mağaza ID",
     placeholder="örn. 106280",
     label_visibility="collapsed",
+    help=(
+        "Trendyol'da tedarikçi mağaza sayfasının URL'sindeki merchantId= değeri.\n\n"
+        "Örnek: trendyol.com/magaza/modatte?merchantId=**106280**"
+    ),
 )
 
-st.caption(
-    "Mağaza ID'yi bulmak için: Trendyol'da tedarikçi mağazasına git → "
-    "URL'de `merchantId=` kısmındaki sayıyı kopyala."
-)
+st.divider()
 
-# Cookie yuklendi mi kontrol et
-cookie_ok = bool(config.RAW_COOKIE and len(config.RAW_COOKIE) > 50)
-if not cookie_ok:
-    st.error(
-        "Cookie ayarlanmamış! Yukarıdaki **Yönetici: Cookie / API Ayarları** bölümünü aç ve "
-        "talimatları izleyerek `.env` dosyasına cookie ekle."
+# --------------------------------------------------------------------------
+# Cookie
+# --------------------------------------------------------------------------
+st.markdown("### Cookie")
+use_default_cookie = st.checkbox(
+    "Varsayılanı kullan (.env'den oku)",
+    value=True,
+    help="İşaretliyken `.env` dosyasındaki cookie kullanılır. Kaldırınca buraya yapıştırabilirsin.",
+)
+if use_default_cookie:
+    cookie_val = config.RAW_COOKIE
+    cookie_ok = bool(cookie_val and len(cookie_val) > 50)
+    if not cookie_ok:
+        st.error(
+            "`.env` dosyasında cookie yok! "
+            "Yukarıdaki **Yönetici** bölümünü aç, talimatları izle."
+        )
+    else:
+        st.caption("✅ `.env` dosyasından okunuyor.")
+else:
+    cookie_val = st.text_area(
+        "Cookie",
+        height=120,
+        placeholder="storefrontId=1; language=tr; ...",
+        label_visibility="collapsed",
+        help=(
+            "**Nasıl alınır:**\n\n"
+            "1. Trendyol.com'u aç\n"
+            "2. F12 → Network → Fetch/XHR\n"
+            "3. `apigw.trendyol.com` isteğine tıkla\n"
+            "4. Request Headers → **Cookie:** satırını komple kopyala"
+        ),
     )
+    cookie_ok = bool(cookie_val and len(cookie_val.strip()) > 50)
+
+st.divider()
+
+# --------------------------------------------------------------------------
+# Detay URL
+# --------------------------------------------------------------------------
+st.markdown("### Detay URL *(opsiyonel)*")
+use_default_detail = st.checkbox(
+    "Varsayılanı kullan (.env'den oku)",
+    value=True,
+    key="default_detail",
+    help=(
+        "İşaretliyken `.env` dosyasındaki TRENDYOL_DETAIL_URL kullanılır. "
+        "Kaldırınca buraya yapıştırabilirsin."
+    ),
+)
+if use_default_detail:
+    detail_url_val = config.DETAIL_URL
+    st.caption(
+        "Açıklama, tam kategori, ölçüler ve barkod bu endpoint'ten gelir. "
+        "Ayarlanmamışsa bu sütunlar boş kalır — diğer veriler yine toplanır."
+    )
+else:
+    detail_url_val = st.text_input(
+        "Detay URL",
+        value=config.DETAIL_URL,
+        label_visibility="collapsed",
+        help=(
+            "**Nasıl alınır:**\n\n"
+            "1. Trendyol'da bir ürün sayfası aç\n"
+            "2. F12 → Network → Fetch/XHR\n"
+            "3. `productgw` içeren `apigw.trendyol.com` isteğini bul\n"
+            "   (`marketing`, `seo`, `review`, `linking` içerenleri atla)\n"
+            "4. Request URL'ini kopyala\n"
+            "5. URL'deki ürün ID numarasını `{product_id}` ile değiştir\n\n"
+            "⚠️ `{product_id}` kısmını koru — program oraya ID'yi otomatik yazar."
+        ),
+    )
+
+st.divider()
 
 can_run = bool(merchant_id.strip()) and cookie_ok
 
@@ -192,6 +259,11 @@ run_btn = st.button(
 # --------------------------------------------------------------------------
 if run_btn:
     mid = merchant_id.strip()
+
+    # Config'i runtime'da ez
+    config.RAW_COOKIE = cookie_val.strip()
+    if detail_url_val and detail_url_val.strip():
+        config.DETAIL_URL = detail_url_val.strip()
 
     st.divider()
     st.subheader("⏳ Çalışıyor...")
