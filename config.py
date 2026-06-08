@@ -63,20 +63,19 @@ HEADER_INFO_URL = (
     "/api/seller-store/{merchant_id}/header-information"
 )
 
-# [DOGRULANMIS] Magaza urun listesi — mid=, pi=, os=1, channelId=1, storefrontId=1
-# Yanit: { products: [...], total: N, _links: { next: "...?pi=1..." } }
-PRODUCTS_URL = (
-    "https://apigw.trendyol.com/discovery-sfint-search-service/api/search/products"
+# Tum endpoint'ler .env'den okunur; yoksa dogrulanmis varsayilan kullanilir.
+# [DOGRULANMIS] mid=, pi=, os=1, channelId=1, storefrontId=1
+PRODUCTS_URL = os.getenv(
+    "TRENDYOL_PRODUCTS_URL",
+    "https://apigw.trendyol.com/discovery-sfint-search-service/api/search/products",
 )
 
-# Urun detay endpoint'i — .env dosyasindaki TRENDYOL_DETAIL_URL'den okunur.
-# {product_id} kismini degistirme, program oraya ID'yi otomatik girer.
 # [DOGRULANMIS] x-agentname: StorefrontProductGateway header'i gerekli
 DETAIL_URL = os.getenv(
     "TRENDYOL_DETAIL_URL",
     "https://apigw.trendyol.com/discovery-storefront-trproductgw-service/api/component-read/component/{product_id}?channelId=1",
 )
-DETAIL_AGENT = "StorefrontProductGateway"  # x-agentname header degeri
+DETAIL_AGENT = os.getenv("TRENDYOL_DETAIL_AGENT", "StorefrontProductGateway")
 
 CHANNEL_ID = 1
 PAGE_SIZE = 24       # listeleme sayfa basi urun (DevTools'tan dogrula)
