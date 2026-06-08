@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+trendyol.db
+trendyol_urunler.csv
+trendyol_urunler.xlsx
+.env

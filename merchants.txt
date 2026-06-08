@@ -1,0 +1,4 @@
+# Her satira bir tedarikci merchant_id yaz. # ile baslayan satirlar yorum.
+# Ornek:
+# 968
+# 12345
