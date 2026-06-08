@@ -123,6 +123,46 @@ class ApiClient:
         stat[status] = stat.get(status, 0) + 1
 
     # -- ana metot ----------------------------------------------------------
+    def get_text(self, url: str, referer: str | None = None) -> str:
+        """Tam HTML sayfasini dondurur (urun sayfasi __NEXT_DATA__ icin)."""
+        last_exc: Exception | None = None
+        attempts = config.MAX_RETRY + 1
+        headers = self._headers(referer)
+
+        for attempt in range(attempts):
+            self._pace()
+            self.metrics["total"] = int(self.metrics["total"]) + 1  # type: ignore[index]
+            try:
+                resp = self.session.get(
+                    url,
+                    headers=headers,
+                    cookies=self.cookies,
+                    timeout=config.TIMEOUT,
+                    proxies=self.proxies,
+                    impersonate=config.IMPERSONATE,
+                )
+            except Exception as exc:
+                last_exc = exc
+                if attempt < attempts - 1:
+                    self._backoff(attempt)
+                    continue
+                raise RuntimeError(f"Ag hatasi: {url}") from exc
+
+            status = resp.status_code
+            self._record_status(status)
+            if status in (401, 403):
+                raise BlockedError("403", url=url, status=status)
+            if status == 429:
+                if attempt < attempts - 1:
+                    self._backoff(attempt, resp)
+                    continue
+                raise BlockedError("429", url=url, status=status)
+            if status >= 400:
+                raise RuntimeError(f"HTTP {status}: {url}")
+            return resp.text or ""
+
+        raise RuntimeError(f"Istek basarisiz: {url}") from last_exc
+
     def get_json(
         self,
         url: str,
