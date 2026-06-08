@@ -8,8 +8,11 @@ Tarayici otomatik acar: http://localhost:8501
 from __future__ import annotations
 
 import os
+import re
 import sys
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
+from urllib.parse import unquote_plus
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -21,6 +24,60 @@ import db
 from api_client import ApiClient
 from export import JOIN_QUERY
 from pipeline import run_merchant
+
+COOKIE_VALIDITY_DAYS = 21  # Trendyol cookie'si genellikle ~3 hafta gecerli
+
+
+def _parse_cookie_date(raw_cookie: str) -> datetime | None:
+    """OptanonConsent icindeki datestamp'i okur. Bulamazsa None doner."""
+    m = re.search(r"datestamp=([^&;]+)", raw_cookie)
+    if not m:
+        return None
+    try:
+        # URL-encoded: "Mon+Jun+08+2026+22%3A16%3A21+GMT%2B0300" -> "Mon Jun 08 2026 ..."
+        text = unquote_plus(m.group(1))
+        # "Mon Jun 08 2026 22:16:21 GMT+0300" -> parse sadece tarih kismini aliyoruz
+        dt = datetime.strptime(text[:15], "%a %b %d %Y")
+        return dt.replace(tzinfo=timezone.utc)
+    except Exception:
+        return None
+
+
+def _cookie_status_widget(raw_cookie: str) -> None:
+    """Cookie tarihini ve tahmini gecerlilik durumunu gosterir."""
+    dt = _parse_cookie_date(raw_cookie)
+    if dt is None:
+        st.info("Cookie tarihi okunamadı — `.env` dosyasındaki cookie güncel mi kontrol et.")
+        return
+
+    expiry = dt + timedelta(days=COOKIE_VALIDITY_DAYS)
+    now = datetime.now(timezone.utc)
+    days_left = (expiry - now).days
+
+    update_str = dt.strftime("%d %B %Y")
+    expiry_str = expiry.strftime("%d %B %Y")
+
+    if days_left > 7:
+        st.success(
+            f"✅ Cookie güncel  \n"
+            f"**Son güncelleme:** {update_str}  \n"
+            f"**Tahmini son geçerlilik tarihi:** {expiry_str} (~{days_left} gün kaldı)"
+        )
+    elif days_left > 0:
+        st.warning(
+            f"⚠️ Cookie yakında dolacak  \n"
+            f"**Son güncelleme:** {update_str}  \n"
+            f"**Tahmini son geçerlilik tarihi:** {expiry_str} (**{days_left} gün kaldı**) — "
+            f"bu hafta güncellemeyi planla."
+        )
+    else:
+        st.error(
+            f"🚫 Cookie süresi dolmuş olabilir  \n"
+            f"**Son güncelleme:** {update_str}  \n"
+            f"**Tahmini son geçerlilik tarihi:** {expiry_str} (geçti)  \n"
+            f"Aşağıdaki adımlarla cookie'yi güncelle."
+        )
+
 
 # --------------------------------------------------------------------------
 st.set_page_config(page_title="Trendyol Scraper", page_icon="🛍️", layout="centered")
@@ -86,6 +143,9 @@ trendyol.com/magaza/modatte?merchantId=106280
                                     bu sayı = Mağaza ID
 ```
     """)
+
+    st.markdown("### Cookie Durumu")
+    _cookie_status_widget(config.RAW_COOKIE)
 
     st.info(
         "`.env` dosyası proje klasöründe bulunur. "
