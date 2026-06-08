@@ -43,13 +43,24 @@ def _extract_description(data: dict) -> str | None:
     return deep_find(data, ["description", "contentDescriptionText", "productDescription"])
 
 
+_debug_saved = False  # ilk urun icin JSON'u dosyaya kaydet
+
+
 def fetch_detail(client: ApiClient, product_id: str, product_url: str | None = None) -> ProductDetail:
+    global _debug_saved
     url = config.DETAIL_URL.format(product_id=product_id)
     data = client.get_json(
         url,
         referer=product_url or "https://www.trendyol.com/",
         extra_headers=_DETAIL_HEADERS,
     )
+
+    # DEBUG: ilk urun icin ham JSON'u kaydet -> hangi alanlarin geldigi gorulsun
+    if not _debug_saved:
+        import json as _json
+        with open("debug_detail.json", "w", encoding="utf-8") as _f:
+            _json.dump(data, _f, ensure_ascii=False, indent=2)
+        _debug_saved = True
 
     # Yanit basarisizsa veya result yoksa bosla devam et (ban degil, veri yok)
     if isinstance(data, dict) and not data.get("isSuccess", True):
