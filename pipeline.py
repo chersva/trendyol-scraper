@@ -40,15 +40,19 @@ def run_merchant(
 
     # --- Phase 3: urun listesi ---
     progress(f"[{merchant_id}] urun listesi cekiliyor...")
-    products = fetch_products(
+    products, partials = fetch_products(
         client,
         merchant_id,
+        store_name=store.name,
         reported_count=store.product_count,
         max_pages=1 if dry_run else config.MAX_PAGES,
         progress=progress,
     )
     for product in products:
         db.upsert_product(conn, product)
+    # Listeden uretilen kismi detay (kategori/marka/ozellik) -> tam detay yoksa bile veri olur.
+    for partial in partials:
+        db.insert_detail_if_absent(conn, partial)
     db.log(conn, merchant_id, None, "products", "ok", message=f"{len(products)} urun")
     progress(f"  -> {len(products)} urun toplandi")
 
@@ -70,12 +74,40 @@ def run_merchant(
         return
 
     # --- Phase 4: detaylar ---
-    progress(f"[{merchant_id}] urun detaylari cekiliyor ({len(products)} urun)...")
-    ok, skipped, errors = 0, 0, 0
-    for i, product in enumerate(products, start=1):
-        if db.has_detail(conn, product.product_id):
-            skipped += 1
-            continue
+    # DETAIL_URL henuz dogrulanmadi. Ilk islenecek urunde bir KEZ test ederiz:
+    # endpoint 404/hatali ise tum kosu boyunca 100+ bos istek atmak yerine
+    # detayi ATLAYIP listeden uretilmis kismi veriyle yetiniriz (ban-guvenli).
+    pending = [p for p in products if not db.has_detail(conn, p.product_id)]
+    skipped = len(products) - len(pending)
+    if not pending:
+        db.update_merchant_status(conn, merchant_id, "ok")
+        progress(f"  -> tum detaylar zaten mevcut (atlandi={skipped})")
+        return
+
+    progress(f"[{merchant_id}] urun detaylari cekiliyor ({len(pending)} urun)...")
+
+    # 1) Kanary: ilk urunun detayini dene. Blok haric hata -> endpoint calismiyor.
+    first = pending[0]
+    try:
+        detail = fetch_detail(client, first.product_id, first.product_url)
+    except BlockedError:
+        raise
+    except Exception as exc:
+        db.log(conn, merchant_id, first.product_id, "detail", "endpoint_fail", message=str(exc))
+        db.update_merchant_status(conn, merchant_id, "ok-listing-only")
+        progress(
+            "  ! DETAY ENDPOINT CALISMIYOR (config.DETAIL_URL dogrulanmali).\n"
+            "    Detay atlandi; kategori/marka/ozellikler listeden alindi.\n"
+            f"    Hata: {exc}"
+        )
+        return
+
+    db.upsert_detail(conn, detail)
+    db.log(conn, merchant_id, first.product_id, "detail", "ok")
+    ok, errors = 1, 0
+
+    # 2) Endpoint calisiyor -> kalan urunler.
+    for i, product in enumerate(pending[1:], start=2):
         try:
             detail = fetch_detail(client, product.product_id, product.product_url)
             db.upsert_detail(conn, detail)
@@ -87,7 +119,7 @@ def run_merchant(
             db.log(conn, merchant_id, product.product_id, "detail", "error", message=str(exc))
             errors += 1
         if i % 10 == 0:
-            progress(f"  detay {i}/{len(products)} (yeni={ok} atlandi={skipped} hata={errors})")
+            progress(f"  detay {i}/{len(pending)} (yeni={ok} hata={errors})")
 
     db.update_merchant_status(conn, merchant_id, "ok")
     progress(f"  -> detay bitti: yeni={ok} atlandi={skipped} hata={errors}")

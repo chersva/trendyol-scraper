@@ -1,28 +1,47 @@
 """Phase 3: Magaza urun listesi (paginated).
 
 [DOGRULANMIS] Endpoint: discovery-sfint-search-service/api/search/products
-Parametreler: mid=merchant_id, pi=sayfa(0'dan), os=1, channelId=1
-Yanit yapisi: products[], total, _links.next
+Ilk istek: mid=, pi=0, os=1, channelId=1, storefrontId=1  (DevTools'ta dogrulandi)
+Sonraki sayfalar: yanittaki _links.next takip edilir; yoksa pi+ / pageSize ile
+manuel ilerleriz (os PARAMETRESI DUSURULUR -- os=1 sabiti sayfalamayi kilitliyordu).
+Yanit yapisi: { products: [...], total: N, _links: { next: ... } }
+
+Listeleme yaniti zaten cok sey iceriyor (category.name, brand, productCardAttributes)
+-> detay endpoint'i olmasa bile bunlardan KISMI bir ProductDetail uretiriz.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Callable
 
 import config
 from api_client import ApiClient
-from extract import deep_find, extract_product_list, full_url, to_number
-from models import Product
+from extract import (
+    deep_find,
+    extract_attributes,
+    extract_brand,
+    extract_breadcrumb,
+    extract_dimensions,
+    extract_next_url,
+    extract_product_list,
+    full_url,
+    to_number,
+)
+from models import Product, ProductDetail
 
 
-def _parse_product(item: dict, merchant_id: str) -> Product:
+def _parse_product(item: dict, merchant_id: str, store_name: str | None) -> Product:
     pid = deep_find(item, ["id", "contentId", "productId", "productContentId"])
     name = deep_find(item, ["name", "productName", "title"])
-    # seller_name listede gelmiyor; merchantId var ama ad yok
-    # -> detay aşamasında zenginleştirilir
-    seller = deep_find(item, ["sellerName", "merchantName", "seller", "supplierName"])
     barcode = deep_find(item, ["barcode", "barkod", "gtin"])
     url = deep_find(item, ["url", "productUrl", "link"])
+
+    # Satici adi listede gelmiyor; magaza sayfasini cektigimiz tedarikci = satici.
+    seller = (
+        deep_find(item, ["sellerName", "merchantName", "supplierName"])
+        or store_name
+    )
 
     # Dogrulanmis fiyat yapisi: price.discountedPrice (indirimli), price.original (liste)
     price_node = item.get("price", {}) if isinstance(item.get("price"), dict) else {}
@@ -47,30 +66,54 @@ def _parse_product(item: dict, merchant_id: str) -> Product:
     )
 
 
+def _parse_listing_detail(item: dict, product_id: str) -> ProductDetail:
+    """Listeleme item'indan KISMI detay uretir (kategori yapragi, marka, kart ozellikleri).
+
+    Detay endpoint'i calistiginda bu kayit zenginlestirilmis veriyle ustune yazilir
+    (idempotent upsert). Boylece detay olmasa bile elimizde anlamli veri olur.
+    """
+    attributes = extract_attributes(item)
+    barcode = deep_find(item, ["barcode", "barkod", "gtin"])
+    return ProductDetail(
+        product_id=str(product_id),
+        category_path=extract_breadcrumb(item),       # listede genelde yaprak kategori
+        description=None,                              # aciklama yalnizca detayda
+        attributes_json=json.dumps(attributes, ensure_ascii=False) if attributes else None,
+        dimensions=extract_dimensions(attributes),
+        brand=extract_brand(item),
+        barcode=str(barcode) if barcode else None,
+    )
+
+
 def fetch_products(
     client: ApiClient,
     merchant_id: str,
+    store_name: str | None = None,
     reported_count: int | None = None,
     max_pages: int = config.MAX_PAGES,
     progress: Callable[[str], None] | None = None,
-) -> list[Product]:
-    # DOGRULANMIS param seti (DevTools'tan)
-    base_params = {
+) -> tuple[list[Product], list[ProductDetail]]:
+    """Tum sayfalari gezer. (urunler, listeden_uretilen_kismi_detaylar) doner."""
+    collected: dict[str, Product] = {}
+    partials: dict[str, ProductDetail] = {}
+    seen_page_signatures: set[frozenset] = set()
+
+    # 1. sayfa: DOGRULANMIS param seti (proven). os=1 burada KALIR.
+    next_url: str | None = config.PRODUCTS_URL
+    next_params: dict | None = {
         "mid": merchant_id,
+        "pi": 0,
         "os": 1,
         "channelId": config.CHANNEL_ID,
         "storefrontId": 1,
     }
-    url = config.PRODUCTS_URL
-    collected: dict[str, Product] = {}
-    seen_page_signatures: set[frozenset] = set()
 
     for pi in range(0, max_pages):
-        params = {**base_params, "pi": pi}
-        data = client.get_json(url, params=params, referer="https://www.trendyol.com/magaza")
+        if not next_url:
+            break
+        data = client.get_json(next_url, params=next_params, referer="https://www.trendyol.com/magaza")
         items = extract_product_list(data)
 
-        # API'nin bildirdiği toplam (ilk sayfada alınır, sonrakinde de aynı gelir)
         if pi == 0 and reported_count is None:
             api_total = deep_find(data, ["total", "totalCount", "roughTotal"])
             if api_total:
@@ -87,15 +130,16 @@ def fetch_products(
         for item in items:
             if not isinstance(item, dict):
                 continue
-            product = _parse_product(item, merchant_id)
+            product = _parse_product(item, merchant_id, store_name)
             if not product.product_id:
                 continue
             page_ids.add(product.product_id)
             if product.product_id not in collected:
                 collected[product.product_id] = product
+                partials[product.product_id] = _parse_listing_detail(item, product.product_id)
                 new_in_page += 1
 
-        # Sayfalama ilerlemiyor mu? (ayni id seti tekrar = donguye girme / shadow-ban)
+        # Ayni id seti tekrar geldi mi? (sayfalama kilitlendi / shadow-ban)
         signature = frozenset(page_ids)
         if signature and signature in seen_page_signatures:
             if progress:
@@ -106,9 +150,22 @@ def fetch_products(
         if progress:
             progress(f"  sayfa {pi}: +{new_in_page} (toplam {len(collected)})")
 
-        if new_in_page == 0:
-            break
         if reported_count and len(collected) >= reported_count:
             break
 
-    return list(collected.values())
+        # --- sonraki sayfa: once API'nin verdigi _links.next, yoksa manuel pi+ (os YOK) ---
+        api_next = extract_next_url(data, next_url)
+        if api_next:
+            next_url = api_next
+            next_params = None
+        else:
+            next_url = config.PRODUCTS_URL
+            next_params = {
+                "mid": merchant_id,
+                "pi": pi + 1,
+                "channelId": config.CHANNEL_ID,
+                "storefrontId": 1,
+                "pageSize": config.PAGE_SIZE,
+            }
+
+    return list(collected.values()), list(partials.values())

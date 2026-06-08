@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS product_details (
     dimensions        TEXT,
     brand             TEXT,
     barcode           TEXT,
-    detail_scraped_at TEXT
+    detail_scraped_at TEXT,
+    source            TEXT DEFAULT 'detail'   -- 'listing' (kismi) | 'detail' (tam)
 );
 
 CREATE TABLE IF NOT EXISTS scrape_log (
@@ -67,6 +68,10 @@ def _now() -> str:
 def connect(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.executescript(SCHEMA)
+    # Eski DB'lerde 'source' sutunu olmayabilir -> guvenli migration.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(product_details)")}
+    if "source" not in cols:
+        conn.execute("ALTER TABLE product_details ADD COLUMN source TEXT DEFAULT 'detail'")
     conn.commit()
     return conn
 
@@ -118,13 +123,14 @@ def upsert_product(conn: sqlite3.Connection, p: Product) -> None:
     conn.commit()
 
 
-def upsert_detail(conn: sqlite3.Connection, d: ProductDetail) -> None:
+def upsert_detail(conn: sqlite3.Connection, d: ProductDetail, source: str = "detail") -> None:
+    """Tam detay (endpoint'ten). Kismi/listeleme kaydinin uzerine yazar."""
     conn.execute(
         """
         INSERT INTO product_details
             (product_id, category_path, description, attributes_json, dimensions,
-             brand, barcode, detail_scraped_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             brand, barcode, detail_scraped_at, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(product_id) DO UPDATE SET
             category_path=excluded.category_path,
             description=excluded.description,
@@ -132,19 +138,41 @@ def upsert_detail(conn: sqlite3.Connection, d: ProductDetail) -> None:
             dimensions=excluded.dimensions,
             brand=excluded.brand,
             barcode=excluded.barcode,
-            detail_scraped_at=excluded.detail_scraped_at
+            detail_scraped_at=excluded.detail_scraped_at,
+            source=excluded.source
         """,
         (
             d.product_id, d.category_path, d.description, d.attributes_json,
-            d.dimensions, d.brand, d.barcode, _now(),
+            d.dimensions, d.brand, d.barcode, _now(), source,
+        ),
+    )
+    conn.commit()
+
+
+def insert_detail_if_absent(conn: sqlite3.Connection, d: ProductDetail, source: str = "listing") -> None:
+    """Kismi detay (listeden). Zaten kayit varsa DOKUNMAZ -> tam detayi ezmez."""
+    conn.execute(
+        """
+        INSERT INTO product_details
+            (product_id, category_path, description, attributes_json, dimensions,
+             brand, barcode, detail_scraped_at, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(product_id) DO NOTHING
+        """,
+        (
+            d.product_id, d.category_path, d.description, d.attributes_json,
+            d.dimensions, d.brand, d.barcode, _now(), source,
         ),
     )
     conn.commit()
 
 
 def has_detail(conn: sqlite3.Connection, product_id: str) -> bool:
-    """Resume icin: bu urunun detayi zaten cekilmis mi?"""
-    cur = conn.execute("SELECT 1 FROM product_details WHERE product_id=?", (product_id,))
+    """Resume icin: bu urunun TAM detayi zaten cekilmis mi? (kismi sayilmaz)"""
+    cur = conn.execute(
+        "SELECT 1 FROM product_details WHERE product_id=? AND source='detail'",
+        (product_id,),
+    )
     return cur.fetchone() is not None
 
 

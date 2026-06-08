@@ -69,6 +69,39 @@ def extract_product_list(data: Any) -> list:
     return []
 
 
+def extract_next_url(data: Any, current_url: str) -> str | None:
+    """Listeleme yanitindaki _links.next baglantisini MUTLAK URL'ye cevirir.
+
+    Trendyol'un kendi urettigi 'sonraki sayfa' linkini takip ederiz; pi/os/pageSize
+    parametrelerini elle tahmin etmek yerine API ne diyorsa onu kullaniriz.
+    """
+    links = data.get("_links") if isinstance(data, dict) else None
+    if not isinstance(links, dict):
+        links = deep_find(data, ["_links", "links"])
+    if not isinstance(links, dict):
+        return None
+    nxt = links.get("next")
+    if isinstance(nxt, dict):
+        nxt = nxt.get("href") or nxt.get("url")
+    if not nxt or not isinstance(nxt, str):
+        return None
+    if nxt.startswith("http"):
+        return nxt
+    if nxt.startswith("?"):
+        return current_url.split("?", 1)[0] + nxt
+    if nxt.startswith("/"):
+        return "https://apigw.trendyol.com" + nxt
+    return "https://apigw.trendyol.com/" + nxt
+
+
+def extract_brand(item: Any) -> str | None:
+    """Marka adini dondurur (dict veya string olabilir)."""
+    brand = deep_find(item, ["brand", "brandName"])
+    if isinstance(brand, dict):
+        brand = deep_find(brand, ["name", "text"])
+    return str(brand).strip() if brand else None
+
+
 def extract_breadcrumb(data: Any) -> str | None:
     """Kategori breadcrumb'ini 'A > B > C' formatinda dondurur."""
     for key in ("breadcrumb", "breadcrumbs", "categoryHierarchy", "categories"):
